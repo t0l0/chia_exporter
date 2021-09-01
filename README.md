@@ -58,6 +58,10 @@ Run `./chia_exporter -h` to see the command configuration options:
           The full node SSL certificate. (default "$HOME/.chia/mainnet/config/ssl/full_node/private_full_node.crt")
     -key string
           The full node SSL key. (default "$HOME/.chia/mainnet/config/ssl/full_node/private_full_node.key")
+    -crt_wllt string
+          The wallet node SSL certificate. (optional, "$HOME/.chia/mainnet/config/ssl/wallet/private_wallet.crt")
+    -key_wllt string
+          The wallet node SSL key. (optional, "$HOME/.chia/mainnet/config/ssl/wallet/private_wallet.crt")
     -listen string
           The address to listen on for HTTP requests. (default ":9133")
     -url string
