@@ -35,10 +35,23 @@ import (
 
 var (
 	addr      = flag.String("listen", ":9133", "The address to listen on for HTTP requests.")
+
 	cert      = flag.String("cert", "$HOME/.chia/mainnet/config/ssl/full_node/private_full_node.crt", "The full node SSL certificate.")
+
 	key       = flag.String("key", "$HOME/.chia/mainnet/config/ssl/full_node/private_full_node.key", "The full node SSL key.")
+
+	// $HOME/.chia/mainnet/config/ssl/wallet/private_wallet.crt
+	crt_wllt  = flag.String("crt_wllt", "", "The wallet node wallet SSL certificate.")
+
+	// $HOME/.chia/mainnet/config/ssl/wallet/private_wallet.key
+	key_wllt  = flag.String("key_wllt", "", "The wallet node wallet SSL key.")
+
+
 	url       = flag.String("url", "https://localhost:8555", "The base URL for the full node RPC endpoint.")
+
 	wallet    = flag.String("wallet", "https://localhost:9256", "The base URL for the wallet RPC endpoint.")
+	//wallet    = flag.String("wallet", "https://172.16.1.12:9256", "The base URL for the wallet RPC endpoint.")
+
 	farmer    = flag.String("farmer", "https://localhost:8559", "The base URL for the farmer RPC endpoint.")
 	harvester = flag.String("harvester", "https://localhost:8560", "The base URL for the harvester RPC endpoint.")
 )
@@ -48,10 +61,16 @@ var (
 )
 
 func main() {
+	var clientWllt *http.Client
 	log.Printf("chia_exporter version %s", Version)
 	flag.Parse()
 
 	client, err := newClient(os.ExpandEnv(*cert), os.ExpandEnv(*key))
+	if len(*crt_wllt) > 0 {
+		clientWllt, err = newClient(os.ExpandEnv(*crt_wllt), os.ExpandEnv(*key_wllt))
+	} else {
+		clientWllt = client
+	}
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -64,6 +83,7 @@ func main() {
 
 	cc := ChiaCollector{
 		client:       client,
+		clientWllt:   clientWllt,
 		baseURL:      *url,
 		walletURL:    *wallet,
 		farmerURL:    *farmer,
@@ -129,8 +149,9 @@ func queryAPI(client *http.Client, base, endpoint, query string, result interfac
 }
 
 type ChiaCollector struct {
-	client       *http.Client
-	baseURL      string
+	client     *http.Client
+	clientWllt *http.Client
+	baseURL    string
 	walletURL    string
 	farmerURL    string
 	harvesterURL string
@@ -152,6 +173,9 @@ func (cc ChiaCollector) Collect(ch chan<- prometheus.Metric) {
 
 func (cc ChiaCollector) collectConnections(ch chan<- prometheus.Metric) {
 	var conns Connections
+	if len(cc.baseURL) == 0 {
+		return
+	}
 	if err := queryAPI(cc.client, cc.baseURL, "get_connections", "", &conns); err != nil {
 		log.Print(err)
 		return
@@ -177,6 +201,9 @@ func (cc ChiaCollector) collectConnections(ch chan<- prometheus.Metric) {
 
 func (cc ChiaCollector) collectBlockchainState(ch chan<- prometheus.Metric) {
 	var bs BlockchainState
+	if len(cc.baseURL) == 0 {
+		return
+	}
 	if err := queryAPI(cc.client, cc.baseURL, "get_blockchain_state", "", &bs); err != nil {
 		log.Print(err)
 		return
@@ -236,7 +263,10 @@ func (cc ChiaCollector) collectBlockchainState(ch chan<- prometheus.Metric) {
 
 func (cc ChiaCollector) collectWallets(ch chan<- prometheus.Metric) {
 	var ws Wallets
-	if err := queryAPI(cc.client, cc.walletURL, "get_wallets", "", &ws); err != nil {
+	if len(cc.walletURL) == 0 {
+		return
+	}
+	if err := queryAPI(cc.clientWllt, cc.walletURL, "get_wallets", "", &ws); err != nil {
 		log.Print(err)
 		return
 	}
@@ -254,7 +284,7 @@ func (cc ChiaCollector) collectWallets(ch chan<- prometheus.Metric) {
 func (cc ChiaCollector) getWalletPublicKey(w Wallet) string {
 	var wpks WalletPublicKeys
 	q := fmt.Sprintf(`{"wallet_id":%d}`, w.ID)
-	if err := queryAPI(cc.client, cc.walletURL, "get_public_keys", q, &wpks); err != nil {
+	if err := queryAPI(cc.clientWllt, cc.walletURL, "get_public_keys", q, &wpks); err != nil {
 		log.Print(err)
 		return ""
 	}
@@ -299,7 +329,7 @@ var (
 func (cc ChiaCollector) collectWalletBalance(ch chan<- prometheus.Metric, w Wallet) {
 	var wb WalletBalance
 	q := fmt.Sprintf(`{"wallet_id":%d}`, w.ID)
-	if err := queryAPI(cc.client, cc.walletURL, "get_wallet_balance", q, &wb); err != nil {
+	if err := queryAPI(cc.clientWllt, cc.walletURL, "get_wallet_balance", q, &wb); err != nil {
 		log.Print(err)
 		return
 	}
@@ -351,7 +381,7 @@ var (
 func (cc ChiaCollector) collectWalletSync(ch chan<- prometheus.Metric, w Wallet) {
 	var wss WalletSyncStatus
 	q := fmt.Sprintf(`{"wallet_id":%d}`, w.ID)
-	if err := queryAPI(cc.client, cc.walletURL, "get_sync_status", q, &wss); err != nil {
+	if err := queryAPI(cc.clientWllt, cc.walletURL, "get_sync_status", q, &wss); err != nil {
 		log.Print(err)
 		return
 	}
@@ -369,7 +399,7 @@ func (cc ChiaCollector) collectWalletSync(ch chan<- prometheus.Metric, w Wallet)
 	)
 
 	var whi WalletHeightInfo
-	if err := queryAPI(cc.client, cc.walletURL, "get_height_info", q, &whi); err != nil {
+	if err := queryAPI(cc.clientWllt, cc.walletURL, "get_height_info", q, &whi); err != nil {
 		log.Print(err)
 		return
 	}
@@ -383,6 +413,9 @@ func (cc ChiaCollector) collectWalletSync(ch chan<- prometheus.Metric, w Wallet)
 
 func (cc ChiaCollector) collectPoolState(ch chan<- prometheus.Metric) {
 	var pools PoolState
+	if len(cc.farmerURL) == 0 {
+		return
+	}
 	if err := queryAPI(cc.client, cc.farmerURL, "get_pool_state", "", &pools); err != nil {
 		log.Print(err)
 		return
@@ -437,6 +470,9 @@ func (cc ChiaCollector) collectPoolState(ch chan<- prometheus.Metric) {
 
 func (cc ChiaCollector) collectPlots(ch chan<- prometheus.Metric) {
 	var plots PlotFiles
+	if len(cc.harvesterURL) == 0 {
+		return
+	}
 	if err := queryAPI(cc.client, cc.harvesterURL, "get_plots", "", &plots); err != nil {
 		log.Print(err)
 		return
@@ -473,7 +509,7 @@ func (cc ChiaCollector) collectPlots(ch chan<- prometheus.Metric) {
 func (cc ChiaCollector) collectFarmedAmount(ch chan<- prometheus.Metric, w Wallet) {
 	var farmed FarmedAmount
 	q := fmt.Sprintf(`{"wallet_id":%d}`, w.ID)
-	if err := queryAPI(cc.client, cc.walletURL, "get_farmed_amount", q, &farmed); err != nil {
+	if err := queryAPI(cc.clientWllt, cc.walletURL, "get_farmed_amount", q, &farmed); err != nil {
 		log.Print(err)
 		return
 	}
